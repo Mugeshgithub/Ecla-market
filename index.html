@@ -287,28 +287,72 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);dis
 </div>
 
 <script>
-const me={name:'You',orders:0,sold:0};
-const listings=[
-  {id:1,cat:'Electronics',title:'iPhone 11 Pro 256GB',price:150,cond:'Like new',desc:'No scratches, comes with charger and box. Battery 89%.',seller:'Karim',img:null,emo:'📱',date:'Today',sold:false},
-  {id:2,cat:'Furniture',title:'Black Leather Sofa Bed',price:70,cond:'Good',desc:'167cm, converts to bed. Moving out — must go!',seller:'Ana',img:null,emo:'🛋',date:'Yesterday',sold:false},
-  {id:3,cat:'Clothes',title:'Zara Jacket — Size S',price:20,cond:'Like new',desc:'Worn once. Beige colour, true to size.',seller:'Sofia',img:null,emo:'🧥',date:'Today',sold:false},
-  {id:4,cat:'Electronics',title:'Monitor 23" Full HD',price:30,cond:'Good',desc:'Works perfectly. Building B pickup.',seller:'Youcef',img:null,emo:'🖥',date:'2d ago',sold:false},
-  {id:5,cat:'Books',title:'Agatha Christie x5',price:8,cond:'Used',desc:'5 English novels. Happy to exchange too!',seller:'Priya',img:null,emo:'📚',date:'3d ago',sold:true},
-];
-const foods=[
-  {id:1,name:'Chicken Biryani',price:6.99,tag:'Homemade',desc:'Generous portion, delivered ~9:30PM. Order before 8PM.',seller:'Priya',img:null,emo:'🍛'},
-  {id:2,name:'Moroccan Tajine',price:10,tag:'Homemade',desc:'Chicken or fish. Order before 11AM, delivered 2hrs later.',seller:'Fatima',img:null,emo:'🫕'},
-  {id:3,name:'Dal Tadka Rice',price:5.50,tag:'Vegan',desc:'Fresh vegetarian. Delivered evenings.',seller:'Priya',img:null,emo:'🍚'},
-  {id:4,name:'Crêpes x3',price:3,tag:'Dessert',desc:'Sweet or savoury, made to order.',seller:'Camille',img:null,emo:'🥞'},
-  {id:5,name:'Banana Bread Slice',price:2.50,tag:'Dessert',desc:'Freshly baked. DM to order.',seller:'Maria',img:null,emo:'🍞'},
-];
-const losts=[
-  {id:1,type:'lost',desc:'iPhone Lightning charger left at gym yesterday evening',poster:'Mohammed',date:'Today'},
-  {id:2,type:'found',desc:'White room access card found near elevator, Building A',poster:'Anna',date:'Yesterday'},
-  {id:3,type:'lost',desc:'AirPod right ear — lost in common areas',poster:'Guest',date:'2d ago'},
-];
+// ─────────────────────────────────────────────────────────────
+// API client — talks to the Node/Express backend.
+// Override by setting localStorage.ecla_api = 'https://your.server'.
+// ─────────────────────────────────────────────────────────────
+const API_BASE = localStorage.getItem('ecla_api')
+  || (location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+        ? 'http://localhost:3000'
+        : 'https://ecla-market.onrender.com'); // replace after deploying
+
+const tgReady = window.Telegram?.WebApp;
+const TG_INIT_DATA = tgReady?.initData || '';
+
+async function api(path, opts = {}) {
+  const res = await fetch(API_BASE + path, {
+    ...opts,
+    headers: {
+      'content-type': 'application/json',
+      'x-telegram-init-data': TG_INIT_DATA,
+      ...(opts.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || res.statusText);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+// Row → frontend shape converters (backend uses snake_case + seller_name).
+const relDate = iso => {
+  if (!iso) return '';
+  const d = new Date(iso.replace(' ', 'T') + 'Z');
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60)       return 'Just now';
+  if (diff < 3600)     return Math.floor(diff/60) + 'm ago';
+  if (diff < 86400)    return 'Today';
+  if (diff < 172800)   return 'Yesterday';
+  return Math.floor(diff/86400) + 'd ago';
+};
+const CAT_EMO = {Electronics:'📱',Clothes:'🧥',Furniture:'🛋',Services:'🛠',Books:'📚',Other:'🎮'};
+const TAG_EMO = {Homemade:'🍛',Dessert:'🍰',Vegan:'🥗',Healthy:'🥗'};
+const toListing = r => ({ id:r.id, cat:r.category, title:r.title, price:r.price, cond:r.condition, desc:r.description, seller:r.seller_name, seller_username:r.seller_username, seller_id:r.seller_id, img:r.image_url, emo:CAT_EMO[r.category]||'📦', date:relDate(r.created_at), sold:!!r.sold });
+const toFood    = r => ({ id:r.id, name:r.name, price:r.price, tag:r.tag, desc:r.description, seller:r.seller_name, seller_username:r.seller_username, img:r.image_url, emo:TAG_EMO[r.tag]||'🍽' });
+const toLost    = r => ({ id:r.id, type:r.type, desc:r.description, poster:r.poster_name, date:relDate(r.created_at) });
+const toAnn     = r => ({ tag:r.tag, text:r.text, author:r.author, date:relDate(r.created_at) });
+
+const me={name:'You',orders:0,sold:0,id:null};
+let listings=[], foods=[], losts=[], announcements=[];
 const st={page:'home',m:'All',f:'All',lo:'All'};
-let nid=100;
+
+async function loadAll(){
+  try{
+    const [L,F,LO,AN] = await Promise.all([
+      fetch(API_BASE+'/api/listings').then(r=>r.json()),
+      fetch(API_BASE+'/api/foods').then(r=>r.json()),
+      fetch(API_BASE+'/api/lost').then(r=>r.json()),
+      fetch(API_BASE+'/api/announcements').then(r=>r.json()),
+    ]);
+    listings    = L.map(toListing);
+    foods       = F.map(toFood);
+    losts       = LO.map(toLost);
+    announcements = AN.map(toAnn);
+  }catch(e){
+    toast('⚠️ Server offline');
+  }
+}
 
 function imgEl(src,emo){return src?`<img src="${src}" style="width:100%;height:100%;object-fit:cover"/>`:`<span>${emo}</span>`}
 
@@ -392,9 +436,20 @@ function rPage(n){
 }
 
 function renderHome(){
-  document.getElementById('h-food').innerHTML=foods.slice(0,5).map(foodMini).join('');
-  document.getElementById('h-grid').innerHTML=listings.slice(0,4).map(cardHTML).join('');
-  document.getElementById('h-lost').innerHTML=losts.slice(0,2).map(lostHTML).join('');
+  // Announcements from DB (fallback to static if server is cold).
+  const annHost = document.querySelector('#page-home .slabel');
+  if(announcements.length && annHost){
+    const annHTML = announcements.slice(0,3).map(a=>`
+      <div class="ann"><div class="ann-tag">📌 ${a.tag}</div><div class="ann-text">${a.text}</div><div class="ann-meta">${a.date} · ${a.author}</div></div>
+    `).join('');
+    // Replace everything between "Announcements" label and the next label.
+    let n = annHost.nextElementSibling;
+    while(n && !n.classList.contains('slabel')){ const next=n.nextElementSibling; n.remove(); n=next; }
+    annHost.insertAdjacentHTML('afterend', annHTML + '<div style="height:20px"></div>');
+  }
+  document.getElementById('h-food').innerHTML=foods.slice(0,5).map(foodMini).join('') || empty('🍽','No food today');
+  document.getElementById('h-grid').innerHTML=listings.slice(0,4).map(cardHTML).join('') || empty('📦','No listings yet');
+  document.getElementById('h-lost').innerHTML=losts.slice(0,2).map(lostHTML).join('') || empty('🔍','Nothing here yet');
 }
 
 function renderMarket(){
@@ -417,9 +472,10 @@ function renderLost(){
 }
 
 function renderProfile(){
-  const mine=listings.filter(l=>l.seller==='You'&&!l.sold);
+  const mine=listings.filter(l=>l.seller_id===me.id && !l.sold);
+  const soldCount=listings.filter(l=>l.seller_id===me.id && l.sold).length;
   document.getElementById('st-l').textContent=mine.length;
-  document.getElementById('st-s').textContent=listings.filter(l=>l.seller==='You'&&l.sold).length;
+  document.getElementById('st-s').textContent=soldCount;
   document.getElementById('st-o').textContent=me.orders;
   document.getElementById('my-list').innerHTML=mine.length
     ?`<div class="grid">${mine.map(cardHTML).join('')}</div>`
@@ -440,7 +496,7 @@ function openDet(type,id){
     <div class="dprice">€${l.price}</div>
     <div class="dmeta">👤 ${l.seller} &nbsp;·&nbsp; 📅 ${l.date}</div>
     <div class="ddesc">${l.desc||'No description.'}</div>
-    ${!l.sold?`<button class="cbtn" onclick="toast('Opening chat with ${l.seller}…')">💬 Contact ${l.seller}</button>`:'<button class="cbtn" style="background:var(--muted);cursor:default">Item Sold</button>'}`;
+    ${!l.sold?`<button class="cbtn" onclick="contactSeller(${l.id},'${(l.seller||'').replace(/'/g,"\\'")}')">💬 Contact ${l.seller}</button>`:'<button class="cbtn" style="background:var(--muted);cursor:default">Item Sold</button>'}`;
   } else {
     const f=foods.find(x=>x.id===id);if(!f)return;
     html=`<div class="dimg">${imgEl(f.img,f.emo)}</div>
@@ -497,33 +553,61 @@ function clearImg(){
 
 function getImg(){const p=document.getElementById('iprev');return p.style.display!=='none'?p.src:null;}
 
-function submitPost(){
+async function submitPost(){
   const t=document.getElementById('pt').value;
   const img=getImg();
-  if(t==='listing'){
-    const title=document.getElementById('l-title').value.trim();
-    const price=document.getElementById('l-price').value;
-    if(!title||!price)return toast('⚠️ Add title and price!');
-    const cat=document.getElementById('l-cat').value.replace(/^[^\s]+\s/,'');
-    const cond=document.getElementById('l-cond').value;
-    const desc=document.getElementById('l-desc').value.trim();
-    listings.unshift({id:nid++,cat,title,price:parseFloat(price),cond,desc,seller:'You',img,emo:'📦',date:'Just now',sold:false});
-  } else if(t==='food'){
-    const name=document.getElementById('f-name').value.trim();
-    const price=document.getElementById('f-price').value;
-    if(!name||!price)return toast('⚠️ Add name and price!');
-    const tag=document.getElementById('f-tag').value;
-    const desc=document.getElementById('f-desc').value.trim();
-    foods.unshift({id:nid++,name,price:parseFloat(price),tag,desc,seller:'You',img,emo:'🍽'});
-  } else {
-    const desc=document.getElementById('lo-desc').value.trim();
-    if(!desc)return toast('⚠️ Describe the item!');
-    losts.unshift({id:nid++,type:t,desc,poster:'You',date:'Just now'});
+  try{
+    if(t==='listing'){
+      const title=document.getElementById('l-title').value.trim();
+      const price=document.getElementById('l-price').value;
+      if(!title||!price)return toast('⚠️ Add title and price!');
+      const category=document.getElementById('l-cat').value.replace(/^[^\s]+\s/,'');
+      const condition=document.getElementById('l-cond').value;
+      const description=document.getElementById('l-desc').value.trim();
+      await api('/api/listings',{method:'POST',body:JSON.stringify({category,title,price:parseFloat(price),condition,description,image_url:img})});
+    } else if(t==='food'){
+      const name=document.getElementById('f-name').value.trim();
+      const price=document.getElementById('f-price').value;
+      if(!name||!price)return toast('⚠️ Add name and price!');
+      const tag=document.getElementById('f-tag').value;
+      const description=document.getElementById('f-desc').value.trim();
+      await api('/api/foods',{method:'POST',body:JSON.stringify({name,price:parseFloat(price),tag,description,image_url:img})});
+    } else {
+      const description=document.getElementById('lo-desc').value.trim();
+      if(!description)return toast('⚠️ Describe the item!');
+      await api('/api/lost',{method:'POST',body:JSON.stringify({type:t,description,image_url:img})});
+    }
+    await loadAll();
+    closeAll();rPage(st.page);renderHome();
+    toast('✅ Posted successfully!');
+  }catch(e){
+    toast('⚠️ '+e.message);
   }
-  closeAll();renderHome();rPage(st.page);toast('✅ Posted successfully!');
 }
 
-function doOrder(id){me.orders++;toast('🍔 Order placed!');if(st.page==='profile')renderProfile();}
+async function doOrder(id){
+  try{
+    await api('/api/orders',{method:'POST',body:JSON.stringify({food_id:id})});
+    me.orders++;
+    toast('🍔 Order placed — seller notified!');
+    if(st.page==='profile')renderProfile();
+  }catch(e){
+    toast('⚠️ '+e.message);
+  }
+}
+
+async function contactSeller(listingId, sellerName){
+  try{
+    const r = await api(`/api/listings/${listingId}/contact`);
+    toast(`💬 ${sellerName} has been notified`);
+    if(r.telegram_url){
+      if(tgReady?.openTelegramLink) tgReady.openTelegramLink(r.telegram_url);
+      else window.open(r.telegram_url,'_blank');
+    }
+  }catch(e){
+    toast('⚠️ '+e.message);
+  }
+}
 
 function mayClose(e,id){if(e.target===document.getElementById(id))document.getElementById(id).classList.remove('open');}
 function closeAll(){document.querySelectorAll('.overlay').forEach(o=>o.classList.remove('open'));}
@@ -539,13 +623,25 @@ if(window.Telegram?.WebApp){
   tg.ready();tg.expand();
   if(tg.initDataUnsafe?.user){
     const u=tg.initDataUnsafe.user;
+    me.id=u.id;
     me.name=u.first_name||'You';
     document.getElementById('pname').textContent=me.name;
     if(u.photo_url)document.getElementById('pavatar').innerHTML=`<img src="${u.photo_url}"/>`;
   }
 }
 
-renderHome();
+(async()=>{
+  await loadAll();
+  // Pull authed /api/me if we have initData — gives us our DB telegram_id and counts.
+  if(TG_INIT_DATA){
+    try{
+      const m = await api('/api/me');
+      me.id = m.telegram_id;
+      me.orders = m.orders;
+    }catch{}
+  }
+  renderHome();
+})();
 </script>
 </body>
 </html>

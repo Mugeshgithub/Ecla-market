@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: ecla-market
+    runtime: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node index.js
+    plan: free
+    disk:
+      name: ecla-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DB_PATH
+        value: /var/data/ecla.db
+      - key: PUBLIC_URL
+        sync: false   # set manually once the service URL is known
+      - key: BOT_TOKEN
+        sync: false
+      - key: GROUP_CHAT_ID
+        sync: false
+      - key: ADMIN_TELEGRAM_IDS
+        sync: false
+      - key: MINI_APP_URL
+        value: https://mugeshgithub.github.io/Ecla-market/

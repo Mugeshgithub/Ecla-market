@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ECLA Admin — Announcements</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0d0d10;--s1:#16161c;--border:#2c2c38;--yellow:#f5c842;--red:#ff5a5a;--green:#3dd68c;--text:#f2f1ec;--muted:#7a7a88}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);padding:20px;max-width:520px;margin:0 auto;min-height:100vh}
+h1{font-family:'Syne',sans-serif;font-size:22px;font-weight:800;margin-bottom:4px}
+h1 em{color:var(--yellow);font-style:normal}
+.sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+.card{background:var(--s1);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:12px}
+label{display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+input,textarea,select{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:11px 13px;color:var(--text);font-family:inherit;font-size:14px;outline:none}
+input:focus,textarea:focus,select:focus{border-color:var(--yellow)}
+textarea{resize:none;height:100px;line-height:1.4}
+.fg{margin-bottom:14px}
+button{width:100%;padding:13px;border-radius:10px;background:var(--yellow);color:#000;font-family:'Syne',sans-serif;font-weight:800;border:none;cursor:pointer;font-size:15px}
+button:disabled{opacity:.5;cursor:not-allowed}
+.slabel{font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin:20px 0 10px}
+.ann{background:linear-gradient(135deg,#1c180a,#231e0c);border-left:3px solid var(--yellow);border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.ann-tag{font-size:9px;font-weight:700;color:var(--yellow);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:2px}
+.ann-text{font-size:13px;line-height:1.5}
+.ann-meta{font-size:10px;color:var(--muted);margin-top:4px}
+.msg{padding:10px;border-radius:8px;margin-bottom:12px;font-size:13px;display:none}
+.msg.err{background:rgba(255,90,90,.15);color:var(--red);display:block}
+.msg.ok{background:rgba(61,214,140,.15);color:var(--green);display:block}
+</style>
+</head>
+<body>
+<h1>ECLA <em>Admin</em></h1>
+<div class="sub">Post announcements to the residence</div>
+
+<div id="msg" class="msg"></div>
+
+<div class="card">
+  <div class="fg">
+    <label>Tag</label>
+    <select id="tag">
+      <option>Reception</option>
+      <option>Community</option>
+      <option>Maintenance</option>
+      <option>Event</option>
+    </select>
+  </div>
+  <div class="fg">
+    <label>Message</label>
+    <textarea id="text" placeholder="e.g. Hot water maintenance Saturday 10AM–2PM."></textarea>
+  </div>
+  <button id="submit">Post announcement</button>
+</div>
+
+<div class="slabel">Recent announcements</div>
+<div id="list"></div>
+
+<script>
+const API_BASE = localStorage.getItem('ecla_api') || 'http://localhost:3000';
+
+const tg = window.Telegram?.WebApp;
+tg?.ready(); tg?.expand();
+const initData = tg?.initData || '';
+
+function showMsg(text, ok) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.className = 'msg ' + (ok ? 'ok' : 'err');
+  setTimeout(() => { el.className = 'msg'; }, 3000);
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(API_BASE + path, {
+    ...opts,
+    headers: {
+      'content-type': 'application/json',
+      'x-telegram-init-data': initData,
+      ...(opts.headers || {}),
+    },
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+  return res.json();
+}
+
+async function loadList() {
+  try {
+    const rows = await fetch(API_BASE + '/api/announcements').then(r => r.json());
+    document.getElementById('list').innerHTML = rows.map(a => `
+      <div class="ann">
+        <div class="ann-tag">📌 ${a.tag}</div>
+        <div class="ann-text">${escape(a.text)}</div>
+        <div class="ann-meta">${a.created_at} · ${escape(a.author)}</div>
+      </div>
+    `).join('') || '<div class="sub">Nothing yet.</div>';
+  } catch (e) {
+    showMsg('Failed to load: ' + e.message, false);
+  }
+}
+
+document.getElementById('submit').addEventListener('click', async () => {
+  const tag = document.getElementById('tag').value;
+  const text = document.getElementById('text').value.trim();
+  if (!text) return showMsg('Write something first.', false);
+  const btn = document.getElementById('submit');
+  btn.disabled = true;
+  try {
+    await api('/api/announcements', { method: 'POST', body: JSON.stringify({ tag, text }) });
+    document.getElementById('text').value = '';
+    showMsg('✅ Announcement posted', true);
+    loadList();
+  } catch (e) {
+    showMsg('Error: ' + e.message, false);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function escape(s){return String(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+
+loadList();
+</script>
+</body>
+</html>
